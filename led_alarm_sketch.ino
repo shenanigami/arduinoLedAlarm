@@ -1,35 +1,10 @@
-/*
-
-  DNS and DHCP-based Web client
-
- This sketch connects to a website (http://www.google.com)
-
- using an Arduino Wiznet Ethernet shield.
-
- Circuit:
-
- * Ethernet shield attached to pins 10, 11, 12, 13
-
- created 18 Dec 2009
-
- by David A. Mellis
-
- modified 9 Apr 2012
-
- by Tom Igoe, based on work by Adrian McEwen
-
- */
 #include <TimeLib.h>
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 
-// Enter a MAC address for your controller below.
-// Newer Ethernet shields have a MAC address printed on a sticker on the shield
-
 const byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 const byte ip[] = {192, 168, 1, 50};
-//char serverName[] = "www.google.com";
 EthernetServer server(80); // Можно выбрать и другой порт
 IPAddress timeServer(128, 138, 140, 44 );
 
@@ -37,23 +12,24 @@ unsigned int localPort = 8888;
 const int NTP_PACKET_SIZE= 48;     
 byte packetBuffer[NTP_PACKET_SIZE]; 
 EthernetUDP Udp;  
+char alarmTimeString[]   = "00000000";  
+bool isSetAlarm = false;
+static unsigned int alarmDelay = 0;
+time_t alarmTime = 0;
+
 
 void setup() {
 
  // Open serial communications and wait for port to open:
-  
   Serial.begin(9600);
 
    while (!Serial) {
-
     ; // wait for serial port to connect. Needed for Leonardo only
-
   }
   Serial.println("Serial.begin succeeded");
 
 
   // start the Ethernet connection:
-
   Ethernet.begin(mac, ip);
   // give the Ethernet shield a second to initialize:
   delay(1000);
@@ -81,18 +57,42 @@ void setup() {
 
 }
 
+// source: https://docs.arduino.cc/tutorials/ethernet-shield-rev2/web-server
 void loop()
 {
   // listen for incoming clients
   EthernetClient client = server.available();
+  String readString = "";
+
   if (client) {
     Serial.println("new client");
+    digitalClockDisplay();
 
     // an http request ends with a blank line
     boolean currentLineIsBlank = true;
     while (client.connected()) {
       if (client.available()) {
+
         char c = client.read();
+        if (readString.length() < 100) {
+          readString += c;
+        }
+
+        if (readString.indexOf("?setAlarm01") > 0) {
+           alarmDelay = 60;
+            setAlarmTime();
+            
+            isSetAlarm = true;
+        } else if (readString.indexOf("?setAlarm05") > 0) {
+            alarmDelay = 300;
+            setAlarmTime();
+            isSetAlarm = true;
+        } else if (readString.indexOf("?setAlarm10") > 0) {
+            alarmDelay = 600;
+            setAlarmTime();
+            isSetAlarm = true;
+        }
+
         Serial.write(c);
         // if you've gotten to the end of the line (received a newline
         // character) and the line is blank, the http request has ended,
@@ -102,10 +102,18 @@ void loop()
           client.println("HTTP/1.1 200 OK");
           client.println("Content-Type: text/html");
           client.println("Connection: close");  // the connection will be closed after completion of the response
-          //client.println("Refresh: 5");  // refresh the page automatically every 5 sec
           client.println();
           client.println("<!DOCTYPE HTML>");
           client.println("<html>");
+          client.println("<body>");
+          if (isSetAlarm)
+            client.print(alarmTimeString);
+          
+          client.println("<a href=\"/?setAlarm01\"\"><button style='font-size:150%; background-color:blue; color:white;border-radius:50px; position:absolute; top:38px; left:15px;'>Alarm in 1 min</button></a>");
+          client.println("<a href=\"/?setAlarm05\"\"><button style='font-size:150%; background-color:blue; color:white;border-radius:50px; position:absolute; top:88px; left:15px;'>Alarm in 5 min</button></a>");
+          client.println("<a href=\"/?setAlarm10\"\"><button style='font-size:150%; background-color:blue; color:white;border-radius:50px; position:absolute; top:138px; left:15px;'>Alarm in 10 min</button></a>");
+
+          client.println("</body>");
           client.println("</html>");
           break;
         }
@@ -116,6 +124,8 @@ void loop()
           // you've gotten a character on the current line
           currentLineIsBlank = false;
         }
+  
+
       }
     }
     
@@ -124,14 +134,35 @@ void loop()
     // close the connection:
     client.stop();
     Serial.println("client disconnected");
-    // default: 30 seconds delay
-    digitalWrite(8, HIGH);
-    delay(6000);
-    Serial.println("Wake up, sunshine!");
-    delay(6000);
-    digitalWrite(8, LOW);
+    if (isSetAlarm) {
+      Serial.print("alarmDelay is: ");
+      Serial.println(alarmDelay);
+      alarmOn();
+      digitalWrite(8, HIGH);
+      digitalClockDisplay();
+      Serial.println("Wake up, sunshine!");
+      delay(25000);
+      digitalWrite(8, LOW);
+      Serial.println("You got this!");
+      digitalClockDisplay();
+      isSetAlarm = false;
+    } 
 
   }
+}
+
+// issues with delay, had to create this function
+void alarmOn() {
+  while(alarmTime > now()) {
+    delay(1000);
+  }
+}
+
+// inspo: https://forum.arduino.cc/t/how-to-convert-the-time-format-from-time-library/590698/2
+void setAlarmTime() {
+  alarmTime = now() + alarmDelay;
+  sprintf(alarmTimeString, "Alarm Time: %02d.%02d.%04d %02d:%02d:%02d", day(alarmTime), month(alarmTime), year(alarmTime),
+    hour(alarmTime), minute(alarmTime), second(alarmTime));
 }
 
 void printDigits(int digits){
@@ -177,6 +208,7 @@ unsigned long getNtpTime()
      // useful page: https://www.epochconverter.com/timezones
      const unsigned long timeZoneOffset = 21600UL;
      unsigned long epoch = secsSince1900 - seventyYears + timeZoneOffset;  // subtract 70 years, add Daylight Saving and Timezone adjust
+
      return epoch;
   }
   return 0; // return 0 if unable to get the time
